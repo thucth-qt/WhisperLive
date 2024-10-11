@@ -5,8 +5,8 @@ import websocket
 import copy
 import unittest
 from unittest.mock import patch, MagicMock
-from whisper_live.client import Client, TranscriptionClient, TranscriptionTeeClient
-from whisper_live.utils import resample
+from whisper_live_sdk.client import Client, TranscriptionClient, TranscriptionTeeClient
+from whisper_live_sdk.utils import resample
 from pathlib import Path
 
 
@@ -154,3 +154,6 @@ class TestTee(BaseTestCase):
         self.tee.write_all_clients_srt()
         self.assertTrue(Path("transcript.srt").is_file())
         self.assertTrue(Path("translation.srt").is_file())
+
+if __name__ == '__main__':
+    unittest.main()

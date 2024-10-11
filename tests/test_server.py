@@ -8,8 +8,8 @@ import numpy as np
 import evaluate
 
 from websockets.exceptions import ConnectionClosed
-from whisper_live.server import TranscriptionServer
-from whisper_live.client import Client, TranscriptionClient, TranscriptionTeeClient
+from whisper_live_sdk.server import TranscriptionServer
+from whisper_live_sdk.client import Client, TranscriptionClient, TranscriptionTeeClient
 from whisper.normalizers import EnglishTextNormalizer
 
 

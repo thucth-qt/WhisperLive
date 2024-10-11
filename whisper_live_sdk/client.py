@@ -11,7 +11,7 @@ import websocket
 import uuid
 import time
 import ffmpeg
-import whisper_live.utils as utils
+import whisper_live_sdk.utils as utils
 
 
 class Client:
@@ -30,7 +30,8 @@ class Client:
         model="small",
         srt_file_path="output.srt",
         use_vad=True,
-        log_transcription=True
+        log_transcription=True,
+        disconnect_if_no_response_for=1
     ):
         """
         Initializes a Client instance for audio recording and streaming to a server.
@@ -50,7 +51,7 @@ class Client:
         self.uid = str(uuid.uuid4())
         self.waiting = False
         self.last_response_received = None
-        self.disconnect_if_no_response_for = 15
+        self.disconnect_if_no_response_for = disconnect_if_no_response_for
         self.language = lang
         self.model = model
         self.server_error = False
@@ -355,34 +356,79 @@ class TranscriptionTeeClient:
             unconditional (bool, optional): If true, send regardless of whether clients are recording.  Default is False.
         """
         for client in self.clients:
+            client: Client
             if (unconditional or client.recording):
                 client.send_packet_to_server(packet)
 
+    # def play_file(self, filename):
+    #     """
+    #     Play an audio file and send it to the server for processing.
+
+    #     Reads an audio file, plays it through the audio output, and simultaneously sends
+    #     the audio data to the server for processing. It uses PyAudio to create an audio
+    #     stream for playback. The audio data is read from the file in chunks, converted to
+    #     floating-point format, and sent to the server using WebSocket communication.
+    #     This method is typically used when you want to process pre-recorded audio and send it
+    #     to the server in real-time.
+
+    #     Args:
+    #         filename (str): The path to the audio file to be played and sent to the server.
+    #     """
+
+    #     # read audio and create pyaudio stream
+    #     with wave.open(filename, "rb") as wavfile:
+    #         self.stream = self.p.open(
+    #             format=self.p.get_format_from_width(wavfile.getsampwidth()),
+    #             channels=wavfile.getnchannels(),
+    #             rate=wavfile.getframerate(),
+    #             input=True,
+    #             output=True,
+    #             frames_per_buffer=self.chunk,
+    #         )
+    #         try:
+    #             while any(client.recording for client in self.clients):
+    #                 data = wavfile.readframes(self.chunk)
+    #                 if data == b"":
+    #                     break
+
+    #                 audio_array = self.bytes_to_float_array(data)
+    #                 self.multicast_packet(audio_array.tobytes())
+    #                 self.stream.write(data)
+
+    #             wavfile.close()
+
+    #             for client in self.clients:
+    #                 client.wait_before_disconnect()
+    #             self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
+    #             self.write_all_clients_srt()
+    #             self.stream.close()
+    #             self.close_all_clients()
+
+    #         except KeyboardInterrupt:
+    #             wavfile.close()
+    #             self.stream.stop_stream()
+    #             self.stream.close()
+    #             self.p.terminate()
+    #             self.close_all_clients()
+    #             self.write_all_clients_srt()
+    #             print("[INFO]: Keyboard interrupt.")
+    
     def play_file(self, filename):
         """
-        Play an audio file and send it to the server for processing.
+        Read an audio file and send it to the server for processing.
 
-        Reads an audio file, plays it through the audio output, and simultaneously sends
-        the audio data to the server for processing. It uses PyAudio to create an audio
-        stream for playback. The audio data is read from the file in chunks, converted to
-        floating-point format, and sent to the server using WebSocket communication.
+        Reads an audio file and sends the audio data to the server for processing.
+        The audio data is read from the file in chunks, converted to floating-point format,
+        and sent to the server using WebSocket communication.
         This method is typically used when you want to process pre-recorded audio and send it
-        to the server in real-time.
+        to the server without playing it back.
 
         Args:
-            filename (str): The path to the audio file to be played and sent to the server.
+            filename (str): The path to the audio file to be sent to the server.
         """
 
-        # read audio and create pyaudio stream
+        # read audio file
         with wave.open(filename, "rb") as wavfile:
-            self.stream = self.p.open(
-                format=self.p.get_format_from_width(wavfile.getsampwidth()),
-                channels=wavfile.getnchannels(),
-                rate=wavfile.getframerate(),
-                input=True,
-                output=True,
-                frames_per_buffer=self.chunk,
-            )
             try:
                 while any(client.recording for client in self.clients):
                     data = wavfile.readframes(self.chunk)
@@ -391,25 +437,25 @@ class TranscriptionTeeClient:
 
                     audio_array = self.bytes_to_float_array(data)
                     self.multicast_packet(audio_array.tobytes())
-                    self.stream.write(data)
 
                 wavfile.close()
 
                 for client in self.clients:
+                    client: Client
                     client.wait_before_disconnect()
                 self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
                 self.write_all_clients_srt()
-                self.stream.close()
                 self.close_all_clients()
 
             except KeyboardInterrupt:
                 wavfile.close()
-                self.stream.stop_stream()
-                self.stream.close()
-                self.p.terminate()
                 self.close_all_clients()
                 self.write_all_clients_srt()
                 print("[INFO]: Keyboard interrupt.")
+            except Exception as e:
+                print(f"[ERROR]: An error occurred while processing the file: {e}")
+                self.close_all_clients()
+                self.write_all_clients_srt()
 
     def process_rtsp_stream(self, rtsp_url):
         """
@@ -693,3 +739,115 @@ class TranscriptionClient(TranscriptionTeeClient):
             save_output_recording=save_output_recording,
             output_recording_filename=output_recording_filename
         )
+
+
+class BatchTranscriptionClient(TranscriptionTeeClient):
+    """
+    Client for handling batch audio transcription tasks via a single WebSocket connection.
+
+    Acts as a high-level client for batch audio transcription tasks using a WebSocket connection. It can be used
+    to send entire audio files for transcription to a server and receive transcribed text segments.
+
+    Args:
+        host (str): The hostname or IP address of the server.
+        port (int): The port number to connect to on the server.
+        lang (str, optional): The primary language for transcription. Default is None, which defaults to English ('en').
+        translate (bool, optional): Indicates whether translation tasks are required (default is False).
+        model (str, optional): The model to use for transcription. Default is "small".
+        use_vad (bool, optional): Whether to use Voice Activity Detection. Default is True.
+        output_transcription_path (str, optional): File to save the output transcription.
+        log_transcription (bool, optional): Whether to log transcription output. Default is True.
+
+    Attributes:
+        client (Client): An instance of the underlying Client class responsible for handling the WebSocket connection.
+
+    Example:
+        To create a BatchTranscriptionClient and start transcription on an audio file:
+        ```python
+        batch_client = BatchTranscriptionClient(host="localhost", port=9090)
+        batch_client("path/to/audio/file.wav")
+        ```
+    """
+    def __init__(
+        self,
+        host,
+        port,
+        lang=None,
+        translate=False,
+        model="small",
+        use_vad=True,
+        output_transcription_path="./output.srt",
+        log_transcription=True,
+    ):
+        self.client = Client(
+            host, port, lang, translate, model, 
+            srt_file_path=output_transcription_path, 
+            use_vad=use_vad, 
+            log_transcription=log_transcription,
+            disconnect_if_no_response_for=0  # Set delay time to zero
+        )
+        if not output_transcription_path.endswith(".srt"):
+            raise ValueError(f"Please provide a valid `output_transcription_path`: {output_transcription_path}. The file extension should be `.srt`.")
+        TranscriptionTeeClient.__init__(
+            self,
+            [self.client],
+            save_output_recording=False,
+            output_recording_filename=None
+        )
+        self.chunk = None  # We'll read the whole file at once
+
+    def __call__(self, audio):
+        """
+        Start the batch transcription process for an audio file.
+
+        Args:
+            audio (str): Path to an audio file for transcription.
+        """
+        print("[INFO]: Waiting for server ready ...")
+        while not self.client.recording:
+            if self.client.waiting or self.client.server_error:
+                self.close_all_clients()
+                return
+
+        print("[INFO]: Server Ready!")
+        self.process_audio_file(audio)
+
+    def process_audio_file(self, filename):
+        """
+        Read an entire audio file and send it to the server for processing.
+
+        Args:
+            filename (str): The path to the audio file to be sent to the server.
+        """
+        with wave.open(filename, "rb") as wavfile:
+            try:
+                # Read the entire file at once
+                data = wavfile.readframes(wavfile.getnframes())
+                audio_array = self.bytes_to_float_array(data)
+                self.multicast_packet(audio_array.tobytes())
+
+                # Send end of audio signal
+                self.multicast_packet(Client.END_OF_AUDIO.encode('utf-8'), True)
+                
+                # Wait for processing to complete
+                while self.client.recording:
+                    time.sleep(0.1)
+
+                self.write_all_clients_srt()
+                self.close_all_clients()
+
+            except Exception as e:
+                print(f"[ERROR]: An error occurred while processing the file: {e}")
+                self.close_all_clients()
+                self.write_all_clients_srt()
+
+    def multicast_packet(self, packet, unconditional=False):
+        """
+        Sends a packet via the client.
+
+        Args:
+            packet (bytes): The audio data packet in bytes to be sent.
+            unconditional (bool, optional): If true, send regardless of whether the client is recording. Default is False.
+        """
+        if unconditional or self.client.recording:
+            self.client.send_packet_to_server(packet)

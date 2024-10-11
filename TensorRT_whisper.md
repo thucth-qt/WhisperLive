@@ -20,6 +20,9 @@ docker run -p 9090:9090 --runtime=nvidia --gpus all --entrypoint /bin/bash -it g
 ## Whisper TensorRT Engine
 - We build `small.en` and `small` multilingual TensorRT engine as examples below. The script logs the path of the directory with Whisper TensorRT engine. We need that model_path to run the server.
 ```bash
+bash build_whisper_tensorrt.sh /app/TensorRT-LLM-examples medium
+
+
 # convert small.en
 bash build_whisper_tensorrt.sh /app/TensorRT-LLM-examples small.en
 

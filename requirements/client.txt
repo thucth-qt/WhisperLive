@@ -1,3 +1,5 @@
+# sudo apt -y install portaudio19-dev
+#sudo apt-get install pavucontrol
 PyAudio
 ffmpeg-python
 scipy
